@@ -43,6 +43,32 @@ cp wrangler.example.toml wrangler.toml
 # Especially update the 'name' field to your desired worker name
 ```
 
+## KV Store Setup
+
+1. Create a KV namespace in the Cloudflare dashboard:
+   ```bash
+   # Using Wrangler CLI
+   wrangler kv:namespace create BOOK_COVERS
+   
+   # Also create a preview namespace for development
+   wrangler kv:namespace create BOOK_COVERS --preview
+   ```
+
+2. Update your `wrangler.toml` with the KV namespace bindings:
+   ```toml
+   kv_namespaces = [
+     { binding = "BOOK_COVERS", id = "xxx", preview_id = "yyy" }
+   ]
+   ```
+
+3. Add required permissions:
+   ```toml
+   [[permissions]]
+   type = "kv"
+   target = "BOOK_COVERS"
+   operation = ["read", "write", "delete"]
+   ```
+
 ## Development
 
 Run the worker locally:
@@ -84,6 +110,58 @@ https://[worker-name].[your-subdomain].workers.dev
 | Cover found | `image/jpeg` | <img src="docs/images/gatsby.jpeg" width="100" alt="Cover Example"/> |
 | No cover found | `image/svg+xml` | <img src="docs/images/none.svg" width="100" alt="Placeholder Example"/> |
 
+## Cache Management
+
+The worker implements a caching strategy to improve performance:
+
+- Successful cover URLs are cached for 30 days
+- Placeholder results are cached for 7 days
+- Cache keys format: `cover:${bookTitle}:${authorName}`
+
+### Managing KV Store
+
+View cached entries:
+```bash
+# List all keys
+wrangler kv:key list --namespace-id=xxx
+
+# Get specific value
+wrangler kv:key get --namespace-id=xxx "your-key"
+
+# Delete specific key
+wrangler kv:key delete --namespace-id=xxx "your-key"
+```
+
+## Resource Limits
+
+- KV Store:
+  - Keys: Maximum 512 bytes
+  - Values: Maximum 25 MB
+  - Read: ~1ms
+  - Write: ~30ms
+- Worker:
+  - CPU: 10ms - 50ms per request
+  - Memory: 128 MB
+  - Environment Variables: 1 KB each
+  - Subrequests: 50 per request
+
+## Performance Optimization
+
+The worker implements several optimizations:
+
+1. KV Caching:
+   - Reduces API calls to Open Library
+   - Improves response times for repeated requests
+   - Handles both successful and fallback cases
+
+2. Browser Caching:
+   - Images are cached with `Cache-Control: public, max-age=31536000, immutable`
+   - Reduces bandwidth usage and improves load times
+
+3. Early Returns:
+   - Returns cached results immediately when available
+   - Avoids unnecessary API calls and processing
+
 ## Error Handling Examples
 
 | Scenario | URL | Result |
@@ -94,16 +172,25 @@ https://[worker-name].[your-subdomain].workers.dev
 
 ## Monitoring
 
-View worker logs in real-time:
+### Viewing Logs
+
 ```bash
+# View real-time logs
 wrangler tail
+
+# Filter logs by status
+wrangler tail --status=error
+
+# Filter logs by method
+wrangler tail --method=GET
 ```
 
-## Security Notes
+### Key Metrics to Monitor
 
-- Never commit your actual worker routes or domains
-- Use environment variables for any environment-specific configuration
-- The `wrangler.toml` file is ignored by git to prevent exposing deployment details
+- Cache hit ratio
+- Response times
+- Error rates
+- KV store usage
 
 ## Common Issues
 
@@ -113,6 +200,31 @@ wrangler tail
 | No image displayed | Check browser console for errors |
 | Deployment fails | Ensure `wrangler.toml` is configured correctly |
 
+## Example Test URLs
+
+Try these URLs with your deployed worker:
+
+```
+https://[your-worker].[subdomain].workers.dev/?book_title=Pride%20and%20Prejudice&author_name=Jane%20Austen
+https://[your-worker].[subdomain].workers.dev/?book_title=1984&author_name=George%20Orwell
+https://[your-worker].[subdomain].workers.dev/?book_title=To%20Kill%20a%20Mockingbird&author_name=Harper%20Lee
+https://[your-worker].[subdomain].workers.dev/?book_title=The%20Hunger%20Games&author_name=Suzanne%20Collins
+https://[your-worker].[subdomain].workers.dev/?book_title=Harry%20Potter%20and%20the%20Sorcerer%27s%20Stone&author_name=J.K.%20Rowling
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
 ## License
 
 MIT License
+
+## Credits
+
+- Book cover images provided by [Open Library](https://openlibrary.org/)
+- Placeholder images generated using [Placehold.co](https://placehold.co/)
