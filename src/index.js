@@ -1,19 +1,42 @@
-// src/index.js
-
 export default {
 	async fetch(request, env, ctx) {
 	  console.log('Fetch event received');
-	  return handleRequest(request);
+	  return handleRequest(request, env);
 	}
   };
   
-  async function handleRequest(request) {
+  async function handleRequest(request, env) {
 	console.log('handleRequest started');
 	const url = new URL(request.url);
 	const bookTitle = url.searchParams.get('book_title') || 'Unknown Title';
 	const authorName = url.searchParams.get('author_name') || 'Unknown Author';
 	
 	console.log('Query params:', { bookTitle, authorName });
+  
+	// Create a cache key from the book title and author
+	const cacheKey = `cover:${bookTitle}:${authorName}`.toLowerCase();
+	
+	// Try to get the cached cover URL
+	const cachedCover = await env.BOOK_COVERS.get(cacheKey);
+	if (cachedCover) {
+	  console.log('Found cached cover URL:', cachedCover);
+	  if (cachedCover === 'PLACEHOLDER') {
+		return getPlaceholderImage(bookTitle, authorName);
+	  }
+	  
+	  // Fetch the cached cover image
+	  const cachedResponse = await fetch(cachedCover);
+	  if (cachedResponse.ok) {
+		return new Response(cachedResponse.body, {
+		  headers: {
+			'Content-Type': 'image/jpeg',
+			'Cache-Control': 'public, max-age=31536000, immutable'
+		  }
+		});
+	  }
+	  // If the cached URL is no longer valid, delete it and continue with normal flow
+	  await env.BOOK_COVERS.delete(cacheKey);
+	}
   
 	// Attempt to fetch ISBNs from Open Library
 	console.log('Fetching ISBNs...');
@@ -22,6 +45,10 @@ export default {
 	
 	if (isbns.length === 0) {
 	  console.log("No ISBNs found, using placeholder");
+	  // Cache the placeholder result
+	  await env.BOOK_COVERS.put(cacheKey, 'PLACEHOLDER', {
+		expirationTtl: 86400 * 7 // Cache for 7 days
+	  });
 	  return getPlaceholderImage(bookTitle, authorName);
 	}
   
@@ -35,9 +62,14 @@ export default {
 	  
 	  if (imageResponse.ok) {
 		console.log(`Cover image found for ISBN ${isbns[i]}`);
+		// Cache the successful cover URL
+		await env.BOOK_COVERS.put(cacheKey, coverUrl, {
+		  expirationTtl: 86400 * 30 // Cache for 30 days
+		});
 		return new Response(imageResponse.body, {
 		  headers: {
-			'Content-Type': 'image/jpeg'
+			'Content-Type': 'image/jpeg',
+			'Cache-Control': 'public, max-age=31536000, immutable'
 		  }
 		});
 	  } else {
@@ -45,13 +77,15 @@ export default {
 	  }
 	}
   
-	// If no valid cover images were found, return the placeholder
+	// If no valid cover images were found, cache and return the placeholder
 	console.log("No valid covers found, using placeholder");
+	await env.BOOK_COVERS.put(cacheKey, 'PLACEHOLDER', {
+	  expirationTtl: 86400 * 7 // Cache for 7 days
+	});
 	return getPlaceholderImage(bookTitle, authorName);
   }
   
   async function getPlaceholderImage(bookTitle, authorName) {
-	// Create a placeholder URL with book title and author
 	const placeholderText = `${bookTitle}\n${authorName}`;
 	const encodedText = encodeURIComponent(placeholderText);
 	const placeholderUrl = `https://placehold.co/325x500?text=${encodedText}`;
@@ -72,7 +106,6 @@ export default {
 		throw new Error(`Placeholder service returned ${placeholderResponse.status}`);
 	  }
   
-	  // Return the placeholder with SVG content type
 	  return new Response(placeholderResponse.body, {
 		status: 200,
 		headers: {
